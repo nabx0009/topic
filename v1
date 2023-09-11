@@ -1,0 +1,33 @@
+namespace iam = google::cloud::iam;
+namespace pubsub = google::cloud::pubsub;
+using google::cloud::StatusCode;
+[](std::string project_id, std::string topic_id) {
+  auto const topic =
+      pubsub::Topic(std::move(project_id), std::move(topic_id));
+  auto client = iam::IAMPolicyClient(
+      iam::MakeIAMPolicyConnection(pubsub::IAMPolicyOptions()));
+
+  // In production code, consider an OCC loop to handle concurrent changes
+  // to the policy.
+  google::iam::v1::GetIamPolicyRequest get;
+  get.set_resource(topic.FullName());
+  auto policy = client.GetIamPolicy(get);
+  if (!policy) throw std::move(policy).status();
+
+  google::iam::v1::SetIamPolicyRequest set;
+  set.set_resource(topic.FullName());
+  *set.mutable_policy() = *std::move(policy);
+  // Add all users as viewers.
+  auto& b0 = *set.mutable_policy()->add_bindings();
+  b0.set_role("roles/pubsub.viewer");
+  b0.add_members("domain:google.com");
+  // Add a group as an editor.
+  auto& b1 = *set.mutable_policy()->add_bindings();
+  b1.set_role("roles/pubsub.publisher");
+  b1.add_members("group:cloud-logs@google.com");
+
+  auto response = client.SetIamPolicy(set);
+  if (!response) throw std::move(response).status();
+  std::cout << "Policy for topic " << topic.FullName() << ": "
+            << response->DebugString() << "\n";
+}
